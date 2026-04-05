@@ -1,0 +1,15 @@
+name: DiscordWhitelist
+version: 1.0
+main: fr.server.core.CorePlugin
+api-version: 1.13
+description: A Discord Whitelist plugin by LEOO955
+author: LEOO955
+commands:
+  discordwhitelist:
+    description: Toggle the whitelist check
+    aliases: [dwhitelist, dw]
+    permission: servercore.admin
+permissions:
+  servercore.admin:
+    description: Allows administrative actions
+    default: op

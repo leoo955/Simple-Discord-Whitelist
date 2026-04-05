@@ -1,0 +1,10 @@
+target/
+*.jar
+.idea/
+*.iml
+.settings/
+.classpath/
+.project/
+player_data/
+players.yml
+config.yml
