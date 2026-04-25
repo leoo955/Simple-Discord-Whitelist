@@ -6,8 +6,7 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 
 /**
- * Command executor for /discordwhitelist.
- * Allows administrators to toggle the whitelist filter on or off in-game.
+ * This command lets admins turn the whitelist filter on or off from inside Minecraft.
  */
 public class ToggleCommand implements CommandExecutor {
     private final CorePlugin plugin;
@@ -17,17 +16,17 @@ public class ToggleCommand implements CommandExecutor {
     }
 
     /**
-     * Executes the /discordwhitelist command.
+     * This is where the magic happens when someone runs the /discordwhitelist command.
      */
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        // Enforce administrative permission
+        // Check if the person has permission to do this.
         if (!sender.hasPermission("servercore.admin")) {
-            sender.sendMessage("§cYou do not have permission to use this command.");
+            sender.sendMessage("§cYou don't have permission to use this command.");
             return true;
         }
 
-        // Toggle the current enabled state in the configuration
+        // Switch the whitelist state: if it's on, turn it off, and vice versa.
         boolean currentState = plugin.getConfig().getBoolean("settings.enabled", false);
         boolean newState = !currentState;
         
@@ -36,7 +35,7 @@ public class ToggleCommand implements CommandExecutor {
 
         String prefix = plugin.getConfig().getString("messages.prefix", "§9[DiscordWhitelist] §r");
 
-        // Notify the sender of the new state
+        // Tell the user what we just did.
         if (newState) {
             sender.sendMessage(prefix + "§aThe Discord Whitelist filter has been ENABLED!");
         } else {

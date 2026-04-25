@@ -1,43 +1,37 @@
 package fr.server.core.discord;
 
 import fr.server.core.CorePlugin;
-import net.dv8tion.jda.api.EmbedBuilder;
+import fr.server.core.managers.PlayerManager;
 import net.dv8tion.jda.api.Permission;
-import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
-import net.dv8tion.jda.api.events.interaction.command.CommandAutoCompleteInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
-import net.dv8tion.jda.api.interactions.commands.Command;
+import org.bukkit.Bukkit;
+import org.bukkit.OfflinePlayer;
+import org.jetbrains.annotations.NotNull;
 
-import java.awt.Color;
-import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Handles Discord slash command interactions and autocomplete events.
+ * This class handles all the slash commands from Discord.
+ * It's how admins can manage the whitelist without even opening Minecraft.
  */
 public class SlashCommandListener extends ListenerAdapter {
 
     private final CorePlugin plugin;
+    private final PlayerManager playerManager;
 
-    public SlashCommandListener(CorePlugin plugin) {
+    public SlashCommandListener(CorePlugin plugin, PlayerManager playerManager) {
         this.plugin = plugin;
+        this.playerManager = playerManager;
     }
 
     @Override
-    public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
-        if (event.getMember() == null)
-            return;
-
-        // Restrict commands to Discord Administrators
-        if (!event.getMember().hasPermission(Permission.ADMINISTRATOR)) {
-            EmbedBuilder eb = new EmbedBuilder();
-            eb.setTitle("Permission Denied");
-            eb.setDescription("You do not have permission to use this command.\nRequired: `Administrator`");
-            eb.setColor(Color.RED);
-            event.replyEmbeds(eb.build()).setEphemeral(true).queue();
+    public void onSlashCommandInteraction(@NotNull SlashCommandInteractionEvent event) {
+        // We only want admins to be able to use these commands.
+        if (event.getMember() == null || !event.getMember().hasPermission(Permission.ADMINISTRATOR)) {
+            event.reply("Sorry, you need to be an administrator to use this.").setEphemeral(true).queue();
             return;
         }
 
@@ -45,196 +39,62 @@ public class SlashCommandListener extends ListenerAdapter {
             case "whitelist" -> handleWhitelist(event);
             case "unwhitelist" -> handleUnwhitelist(event);
             case "unlink" -> handleUnlink(event);
-            case "whitelistlist" -> handleWhitelistList(event);
+            case "whitelistlist" -> handleList(event);
         }
     }
 
-    /**
-     * Provides autocomplete suggestions for the 'pseudo' option.
-     */
-    @Override
-    public void onCommandAutoCompleteInteraction(CommandAutoCompleteInteractionEvent event) {
-        if (!event.getFocusedOption().getName().equals("pseudo"))
-            return;
-
-        String input = event.getFocusedOption().getValue().toLowerCase();
-        List<String> names = plugin.getPlayerManager().getAllPlayerNames();
-
-        List<Command.Choice> choices = names.stream()
-                .filter(name -> name.toLowerCase().startsWith(input))
-                .limit(25)
-                .map(name -> new Command.Choice(name, name))
-                .collect(Collectors.toList());
-
-        event.replyChoices(choices).queue();
-    }
-
-    /**
-     * Handler for /whitelist command.
-     */
     private void handleWhitelist(SlashCommandInteractionEvent event) {
         String pseudo = event.getOption("pseudo").getAsString();
+        // Let's make sure the name isn't too long.
+        if (pseudo.length() > 16) {
+            event.reply("That name looks a bit too long for Minecraft.").setEphemeral(true).queue();
+            return;
+        }
 
-        plugin.getServer().getScheduler().runTask(plugin, () -> {
-            plugin.getPlayerManager().addPlayerByName(pseudo);
+        OfflinePlayer player = Bukkit.getOfflinePlayer(pseudo);
+        String uuid = player.getUniqueId().toString();
+        Member member = event.getMember();
 
-            EmbedBuilder eb = new EmbedBuilder();
-            eb.setTitle("Player Whitelisted");
-            eb.setDescription("**" + pseudo + "** has been added to the whitelist!");
-            eb.setColor(new Color(87, 242, 135));
-            eb.addField("Player", pseudo, true);
-            eb.addField("Action", "Added to whitelist", true);
-            eb.setFooter("DiscordWhitelist • by LEOO955",
-                    event.getJDA().getSelfUser().getEffectiveAvatarUrl());
+        playerManager.whitelistPlayer(uuid, member.getId());
 
-            event.replyEmbeds(eb.build()).queue();
-        });
+        String roleName = plugin.getConfig().getString("bot.role-name", "Whitelisted");
+        Role role = event.getGuild().getRolesByName(roleName, true).stream().findFirst().orElse(null);
+
+        if (role != null) {
+            event.getGuild().addRoleToMember(member, role).queue();
+        }
+
+        event.reply("Got it! **" + pseudo + "** has been added to the whitelist.").setEphemeral(true).queue();
     }
 
-    /**
-     * Handler for /unwhitelist command.
-     */
     private void handleUnwhitelist(SlashCommandInteractionEvent event) {
         String pseudo = event.getOption("pseudo").getAsString();
-
-        plugin.getServer().getScheduler().runTask(plugin, () -> {
-            String discordId = plugin.getPlayerManager().removeWhitelist(pseudo);
-
-            if (discordId == null) {
-                EmbedBuilder eb = new EmbedBuilder();
-                eb.setTitle("Player Not Found");
-                eb.setDescription("**" + pseudo + "** was not found in the database.");
-                eb.setColor(Color.RED);
-                eb.setFooter("DiscordWhitelist • by LEOO955",
-                        event.getJDA().getSelfUser().getEffectiveAvatarUrl());
-                event.replyEmbeds(eb.build()).setEphemeral(true).queue();
-                return;
-            }
-
-            // Remove Discord role if linked
-            if (!discordId.isEmpty()) {
-                removeDiscordRole(discordId);
-            }
-
-            EmbedBuilder eb = new EmbedBuilder();
-            eb.setTitle("Player Removed from Whitelist");
-            eb.setDescription("**" + pseudo + "** has been removed from the whitelist!");
-            eb.setColor(new Color(255, 165, 0));
-            eb.addField("Player", pseudo, true);
-            eb.addField("Action", "Removed from whitelist", true);
-            eb.setFooter("DiscordWhitelist • by LEOO955",
-                    event.getJDA().getSelfUser().getEffectiveAvatarUrl());
-
-            event.replyEmbeds(eb.build()).queue();
-        });
+        OfflinePlayer player = Bukkit.getOfflinePlayer(pseudo);
+        playerManager.unwhitelistPlayer(player.getUniqueId().toString());
+        
+        event.reply("**" + pseudo + "** has been removed from the whitelist.").setEphemeral(true).queue();
     }
 
-    /**
-     * Handler for /unlink command.
-     */
     private void handleUnlink(SlashCommandInteractionEvent event) {
         String pseudo = event.getOption("pseudo").getAsString();
-
-        plugin.getServer().getScheduler().runTask(plugin, () -> {
-            String discordId = plugin.getPlayerManager().unlinkPlayer(pseudo);
-
-            if (discordId == null) {
-                EmbedBuilder eb = new EmbedBuilder();
-                eb.setTitle("Player Not Found");
-                eb.setDescription("**" + pseudo + "** was not found in the database.");
-                eb.setColor(Color.RED);
-                eb.setFooter("DiscordWhitelist • by LEOO955",
-                        event.getJDA().getSelfUser().getEffectiveAvatarUrl());
-                event.replyEmbeds(eb.build()).setEphemeral(true).queue();
-                return;
-            }
-
-            // Remove Discord role if was linked
-            if (!discordId.isEmpty()) {
-                removeDiscordRole(discordId);
-            }
-
-            EmbedBuilder eb = new EmbedBuilder();
-            eb.setTitle("Player Unlinked");
-            eb.setDescription("**" + pseudo + "**'s Discord account has been unlinked!");
-            eb.setColor(new Color(255, 215, 0));
-            eb.addField("Player", pseudo, true);
-            eb.addField("Action", "Discord unlinked", true);
-            eb.setFooter("DiscordWhitelist • by LEOO955",
-                    event.getJDA().getSelfUser().getEffectiveAvatarUrl());
-
-            event.replyEmbeds(eb.build()).queue();
-        });
+        OfflinePlayer player = Bukkit.getOfflinePlayer(pseudo);
+        playerManager.unwhitelistPlayer(player.getUniqueId().toString());
+        
+        event.reply("Account unlinked for **" + pseudo + "**.").setEphemeral(true).queue();
     }
 
-    /**
-     * Handler for /whitelistlist command.
-     */
-    private void handleWhitelistList(SlashCommandInteractionEvent event) {
-        plugin.getServer().getScheduler().runTask(plugin, () -> {
-            List<Map<String, String>> players = plugin.getPlayerManager().getWhitelistedPlayers();
-
-            EmbedBuilder eb = new EmbedBuilder();
-            eb.setTitle("Whitelist (" + players.size() + " players)");
-            eb.setColor(new Color(88, 101, 242));
-
-            if (players.isEmpty()) {
-                eb.setDescription("No players are currently whitelisted.");
-            } else {
-                StringBuilder sb = new StringBuilder();
-                int count = 0;
-                for (Map<String, String> info : players) {
-                    count++;
-                    String linked = info.get("linked").equals("true") ? "✅" : "❌";
-                    String discordTag = info.get("discord_id").equals("N/A") ? "N/A"
-                            : "<@" + info.get("discord_id") + ">";
-                    sb.append("**").append(count).append(".** `").append(info.get("name")).append("`")
-                            .append(" — Discord: ").append(discordTag)
-                            .append(" — Linked: ").append(linked)
-                            .append("\n");
-
-                    // Discord embed limit: split into multiple fields if too long
-                    if (count % 10 == 0) {
-                        eb.addField("", sb.toString(), false);
-                        sb.setLength(0);
+    private void handleList(SlashCommandInteractionEvent event) {
+        String list = playerManager.getWhitelistedPlayers().stream()
+                .limit(50) // We'll show up to 50 players so we don't spam the chat.
+                .map(uuid -> {
+                    try {
+                        return Bukkit.getOfflinePlayer(java.util.UUID.fromString(uuid)).getName();
+                    } catch (Exception e) {
+                        return "Unknown";
                     }
-                }
-                if (sb.length() > 0) {
-                    eb.addField("", sb.toString(), false);
-                }
-            }
-
-            eb.setFooter("DiscordWhitelist • by LEOO955",
-                    event.getJDA().getSelfUser().getEffectiveAvatarUrl());
-
-            event.replyEmbeds(eb.build()).queue();
-        });
-    }
-
-    /**
-     * Revokes the white-list role from a specified Discord user ID.
-     */
-    private void removeDiscordRole(String discordId) {
-        String guildId = plugin.getConfig().getString("bot.guild-id", "").trim().replace("/", "");
-        String roleName = plugin.getConfig().getString("bot.role-name", "Whitelisted");
-
-        if (guildId.isEmpty())
-            return;
-
-        Guild guild = plugin.getBotManager().getJda().getGuildById(guildId);
-        if (guild == null)
-            return;
-
-        guild.retrieveMemberById(discordId).queue(member -> {
-            List<Role> roles = guild.getRolesByName(roleName, true);
-            if (!roles.isEmpty()) {
-                Role role = roles.get(0);
-                guild.removeRoleFromMember(member, role).queue(
-                        success -> plugin.getLogger()
-                                .info("Removed '" + roleName + "' role from " + member.getEffectiveName()),
-                        error -> plugin.getLogger()
-                                .severe("Failed to remove role: " + error.getMessage()));
-            }
-        });
+                })
+                .collect(Collectors.joining(", "));
+        
+        event.reply("Here are the first 50 whitelisted players: " + (list.isEmpty() ? "None yet!" : list)).setEphemeral(true).queue();
     }
 }
